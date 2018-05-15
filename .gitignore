@@ -13,3 +13,6 @@ util/geo-location/GeoIP.dat
 __pycache__/
 *.py[cod]
 *$py.class
+zy_rules.conf
+zy_rules.conf.bak
+pegasus.spec

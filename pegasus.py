@@ -6,12 +6,14 @@ RULES_DIR = "rules"
 
 
 def parse_rule_file(input_file_name, output_file_name):
+    if not isinstance(input_file_name, str) and isinstance(output_file_name, str):
+        raise TypeError('bad operand type')
     coding_type = 'UTF-8' if "REQUEST-942-APPLICATION-ATTACK-SQLI.conf" in input_file_name else 'ansi'
     with open(input_file_name, 'r', encoding=coding_type) as f:
         rule_found = 0
         rule_var = ''
         rule_op = ''
-        rule_msg = ''
+        rule_msg = 'NO_MSG'
         rule_id = ''
         for line in f.readlines():
             # Structure in line: Variable,Operator,Message,Rule_id
@@ -22,7 +24,6 @@ def parse_rule_file(input_file_name, output_file_name):
                 rule_found = 1
                 list_line = line.split()
                 rule_var = list_line[1]
-                print(line.strip() + 'testesttest')
                 matchobj = re.match(r'SecRule (.*) (".*") *\\', line.strip())
                 if matchobj:
                     rule_op = matchobj.group(2)
@@ -41,10 +42,8 @@ def parse_rule_file(input_file_name, output_file_name):
                 rule_found = 0
                 rule_var = ''
                 rule_op = ''
-                rule_msg = ''
+                rule_msg = 'NO_MSG'
                 rule_id = ''
-
-    print('%s is done!!\n' % input_file_name)
 
 
 def get_conf_files():
@@ -55,7 +54,8 @@ def get_conf_files():
         if not f.endswith('conf'):
             continue
         list_name = f[0:-5].split('-')
-        if float(list_name[1]) < 913 or float(list_name[1]) >= 959:
+        file_id = float(list_name[1])
+        if file_id < 913 or file_id >= 959:
             """
             Exclude several rules:
             1. initialization

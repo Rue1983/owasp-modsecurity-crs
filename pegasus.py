@@ -1,7 +1,7 @@
 import re
 import os
 
-ZY_RULE_FILE = "zy_rules.conf"  # File we write parsed rules into.
+ZY_RULE_FILE = "zy_rules_new.conf"  # File we write parsed rules into.
 RULES_DIR = "rules"
 
 
@@ -11,10 +11,13 @@ def parse_rule_file(input_file_name, output_file_name):
     coding_type = 'UTF-8' if "REQUEST-942-APPLICATION-ATTACK-SQLI.conf" in input_file_name else 'ansi'
     with open(input_file_name, 'r', encoding=coding_type) as f:
         rule_found = 0
+        chain_found = 0
         rule_var = ''
         rule_op = ''
         rule_msg = 'NO_MSG'
         rule_id = ''
+        chain1 = ''
+        chain2 = ''
         for line in f.readlines():
             # Structure in line: Variable,Operator,Message,Rule_id
             if line.startswith('#') or line.startswith('SecRule TX') or line.startswith('SecMarker'):
@@ -36,9 +39,23 @@ def parse_rule_file(input_file_name, output_file_name):
                 rule_msg = list_line[1].strip()
             elif 'id:' in line and rule_found == 1:
                 rule_id = re.search('\d{6}', line.strip()).group()
+            #elif line.startswith('    ') and line.lstrip(' "').startswith('chain') and rule_found == 1:
+                #chain_found = 1
+            elif line.startswith('    ') and line.lstrip(' "').startswith('SecRule') and rule_found == 1:
+                if chain_found == 0:
+                    chain1 = line.strip(' \r\n\\')
+                    chain_found = 1
+                elif chain_found == 1:
+                    chain2 = line.strip(' \r\n\\')
+                    print(chain2)
             elif re.match('\n', line) and rule_found == 1:
                 z = open(output_file_name, "a", encoding=coding_type)
-                z.write("%s\t%s\t%s\t%s\n" % (rule_id, rule_msg, rule_var, rule_op))
+                output = "%s\t%s\t%s\t%s\n" % (rule_id, rule_msg, rule_var, rule_op)
+                if chain1:
+                    output = "%s\t%s\n" % (output.rstrip('\n'), chain1)
+                if chain2:
+                    output = "%s\t%s\n" % (output.rstrip('\n'), chain2)
+                z.write(output)
                 rule_found = 0
                 rule_var = ''
                 rule_op = ''
@@ -55,7 +72,7 @@ def get_conf_files():
             continue
         list_name = f[0:-5].split('-')
         file_id = float(list_name[1])
-        if file_id < 913 or file_id >= 959:
+        if file_id < 913 or file_id >= 954:
             """
             Exclude several rules:
             1. initialization

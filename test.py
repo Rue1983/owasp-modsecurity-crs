@@ -4,16 +4,16 @@ from collections import OrderedDict
 import os
 import sqlite3
 import re
+import regex
+regex.DEFAULT_VERSION = regex.V1
+global DATA_FILES
 
 ZY_RULE_FILE = "zy_rules.conf"  # File we write parsed rules into.
 RULES_DIR = "rules"
-DROP_LIST = ['REQBODY_ERROR', 'MULTIPART_STRICT_ERROR', 'IP:REPUT_BLOCK_FLAG', 'XML:/*', 'RESPONSE_BODY', 'FILES']
-WAITING_LIST = ['QUERY_STRING', 'FILES_NAMES', 'REQUEST_METHOD', 'REQUEST_PROTOCOL', 'REQUEST_URI_RAW',
-                'REQUEST_BASENAME', 'REQUEST_FILENAME', 'REQUEST_BODY', 'ARGS', 'ARGS_GET', 'ARGS_NAMES',
-                'TX:MAX_NUM_ARGS', 'TX:ARG_NAME_LENGTH', 'TX:ARG_LENGTH' , 'TX:TOTAL_ARG_LENGTH', 'TX:MAX_FILE_SIZE',
-                'COMBINED_FILE_SIZES']
+DROP_LIST = set(['REQBODY_ERROR', 'MULTIPART_STRICT_ERROR', 'IP:REPUT_BLOCK_FLAG', 'XML:/*', 'RESPONSE_BODY', 'FILES'])
+WAITING_LIST = set(['FILES_NAMES', 'REQUEST_BODY', 'TX:MAX_NUM_ARGS', 'TX:ARG_NAME_LENGTH', 'TX:ARG_LENGTH',
+                'TX:TOTAL_ARG_LENGTH', 'TX:MAX_FILE_SIZE', 'COMBINED_FILE_SIZES'])
 COOKIE = 'Cookie'
-
 db_name = 'alertsbig.db'
 
 
@@ -63,9 +63,11 @@ def get_all_rules(filename):
     """
     Get all rules from given file which is saved rules we collect from modSecurity
     :param filename:
-    :return:
+    :return: all rules and all files' data in 2 dicts
     """
     dict_rules = OrderedDict()
+    dict_datafiles = {}
+    dt = []
     Rules = namedtuple('Rule', ['message', 'variables', 'oprators'])
     with open(filename, 'r', encoding='UTF-8') as f:
         for line in f.readlines():
@@ -74,8 +76,21 @@ def get_all_rules(filename):
                 continue
             li = line.split('\t')
             dict_rules[li[0]] = Rules._make(li[1:])
-    #print(dict_rules)
-    return dict_rules
+            if li[3].strip('"\n\r').lower().startswith('@pmf'):
+                data_file_name = li[3].strip('"\n\r').split(' ')[1]
+                dt.append(data_file_name)
+    for file in dt:
+        f_path = '%s\\%s' % (RULES_DIR, file)
+        f_list = []
+        with open(f_path, 'r', encoding='UTF-8') as f:
+            for line in f.readlines():
+                if line and not line.startswith('#'):
+                    f_list.append(line.rstrip('\n'))
+        if f_list:
+            dict_datafiles[file] = set(f_list)
+    #print(dict_datafiles)
+    return dict_rules, dict_datafiles
+#get_all_rules(ZY_RULE_FILE)
 
 
 def get_vars_from_request(request):
@@ -119,7 +134,7 @@ def get_vars_from_request(request):
     ret.append(request_basename)
     ret.append(query_string)
     ret.append(request_protocol)
-    return ret#args_get, args_get_names, request_filename, request_basename, query_string, method, uri, request_protocol
+    return ret    #args_get, args_get_names, request_filename, request_basename, query_string, method, uri, request_protocol
 # request = 'GET /bemarket/shop/index.php?pageurl=viewpage&filename=../../../../../../../../../../../../../../etc/passwd HTTP/1.1'
 # request2 = 'GET /htgrep/file=index.html&hdr=/etc/passwd HTTP/2'
 # request3 = 'GET /scripts/script/cat_for_gen.php?ad=1&ad_direct=../&m_for_racine=%3C/option%3E%3C/SELECT%3E%3C?phpinfo();?%3E HTTP/1.1'
@@ -147,35 +162,51 @@ def execute_rule(alert, header, rule):
     if operators.startswith('!@'):
         is_op_neg = 1
         operators = operators.strip('!')
-    # print('test111 variables', variables)
-    # print('test222 operators', operators)
+    print('test111 variables', variables)
+    print('test222 operators', operators)
     # print(alert, '\n', header, '\n')
     if not variables:
         return ret
     for v in variables:
         if operators.startswith('@rx '):
             operators = operators[4:]
-            matchobj = re.search(r'%s' % operators, v)
+            matchobj = regex.search(r'%s' % operators, str(v))
             if matchobj or is_op_neg:
-                ret.append(matchobj.group(0))
+                ret.append(1)
                 #print('operator: %s\nv: %s\nmatchobj: %s' % (operators, v, matchobj))
                 #print('matched for @rx is :', matchobj.group(0))
             else:
                 continue
         elif not operators.startswith('@'):
-            matchobj = re.search(r'%s' % operators, str(v))
+            if operators != '^$' and not v and not is_op_neg:
+                continue
+
+            matchobj = regex.search(r'%s' % operators, str(v))
+            print(operators, str(v), matchobj)
             if matchobj or is_op_neg:
-                ret.append(matchobj.group(0))
+                ret.append(1)
                 #print('operator: %s\nv: %s\nmatchobj: %s' % (operators, v, matchobj))
                 #print('matched for no is :', matchobj.group(0))
             else:
                 continue
-        elif operators.startswith('@pmFromFile'):
-            pass
+        elif operators.lower().startswith('@pmf'):  # @pmf equal to @pmFromFiles
+            if not v:
+                continue
+            file_name = operators.split(' ')[1]
+            for op in DATA_FILES[file_name]:
+                if op in v:
+                    ret.append(1)
+                    print('#################', op, v, file_name)
+                    continue
             #ret.append('captured pmFromFile') # handle the !
-        elif operators.startswith('@pmf'):
-            pass
-            #ret.append('')
+        elif operators.lower().startswith('@pm'):  # @pmf equal to @pmFromFiles
+            if not v:
+                continue
+            op_list = operators.split(' ')[1:]
+            for op in op_list:
+                if op in str(v):
+                    ret.append(1)
+                    continue
         elif operators.startswith('@eq'):
             print('captured eq', operators, v)
             if not v:
@@ -187,14 +218,13 @@ def execute_rule(alert, header, rule):
             pass
             #ret.append('captured validateByteRange')  # handle the !
         elif operators.startswith('@within'):
-            pass
+            pass  # only one rule use it to check allowed http version which is not we care about.
             #ret.append('captured within')  # handle the !
         elif operators.startswith('@endsWith'):
-            pass
+            print('captured endsWith', operators, v)
+            if v and str(v).endswith(operators[10:]):
+                    ret.append('1')
             #ret.append('captured endsWith')  # handle the !
-        elif operators.startswith('@pm'):
-            pass
-            #ret.append('captured pm')  # handle the !
         elif operators.startswith('@detectXSS'):
             pass
             #ret.append('captured detectXSS') # handle the !
@@ -203,7 +233,6 @@ def execute_rule(alert, header, rule):
             # ret.append('captured detectSQLi')  # handle the !
         else:
             raise ValueError('Unsupported modSecurity operator found!')
-
     return len(ret)
 
 
@@ -213,18 +242,20 @@ def parse_variables(alerts, headers, variables):
     :param variable: REQUEST_HEADERS:Range|REQUEST_HEADERS:Request-Range
     :return: a list of data
     """
+    print('parse variables: %s\n%s\n%s\n' % (alerts, headers, variables))
     new_vars = []
     if not isinstance(variables, str):
         raise TypeError('bad operand type')
     list_var = variables.split('|')
     list_var.sort()  # Put ! and & items at the beginning
-    for i in list_var:
-        ii = i.lstrip('!&')
-        if ii in DROP_LIST or ii in WAITING_LIST:
+    for v in list_var:
+        nv = v.lstrip('!&')
+        if nv in DROP_LIST or nv in WAITING_LIST:
             continue
         else:
-            new_vars.append(i)
+            new_vars.append(v)
     real_var = []
+    print('before switch vas are', new_vars)
     if len(new_vars) != 0:
         for v in new_vars:
             if v.lstrip('!&').startswith('REQUEST_HEADERS:'):
@@ -276,11 +307,14 @@ def parse_variables(alerts, headers, variables):
                     real_var.append('')  # if there is no cookie, return empty to match regex.
                     continue
                 else:
-                    real_var.append(','.join(headers[Cookie].keys()))
-            elif v == 'ARGS_GET' or 'ARGS':
-                real_var.append(alerts.request_basename)
-            elif v == 'ARGS_GET_NAMES' or 'ARGS_NAMES':
-                if len(ARGS_GET_NAMES) == 0:
+                    real_var.append(','.join(headers[COOKIE].keys()))
+            elif v == 'ARGS_GET' or v == 'ARGS':
+                print(v, alerts.args_get)
+                print('captured args: %s' % alerts.args_get)
+                real_var.append(alerts.args_get)
+            elif v == 'ARGS_GET_NAMES' or v == 'ARGS_NAMES':
+                print('captured args_names: %s' % alerts.args_get_names)
+                if len(alerts.args_get_names) == 0:
                     real_var.append('')  # if there is no args, return empty to match regex.
                     continue
                 real_var.append(','.join(alerts.args_get_names))
@@ -289,6 +323,7 @@ def parse_variables(alerts, headers, variables):
             elif v == 'REQUEST_LINE':
                 real_var.append(alerts.request)
             elif v == 'RESPONSE_STATUS':
+                print('captured RESPONSE_STATUS: %s' % alerts.status)
                 real_var.append(alerts.status)
             elif v == 'REQUEST_PROTOCOL':
                 real_var.append(alerts.request_protocol)
@@ -304,6 +339,7 @@ def parse_variables(alerts, headers, variables):
                 real_var.append(alerts.request_uri_raw)
 
     #'request_uri_raw', 'method', 'args_get', 'args_get_names', 'request_filename'
+    print('return parsed vars are : ', real_var)
     return real_var
 
 
@@ -354,19 +390,26 @@ def get_data(id, db_name):
 #get_data(114791, "alertsbig.db")
 
 
+
+# alert, header = get_data(114791, db_name)
+# dict_rules = get_all_rules(ZY_RULE_FILE)
+# parse_variables(alert,header,dict_rules['920201'].variables)
+
+
 if __name__ == '__main__':
     #get_all_operator_types(ZY_RULE_FILE)
     result_file_name = "result_modsecurity.txt"
-    dict_rules = get_all_rules(ZY_RULE_FILE)
+    dict_rules, DATA_FILES = get_all_rules(ZY_RULE_FILE)
     result = []
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
     cursor = c.execute('select count(*) from alerts ')
     for row in cursor:
         rec_num = row[0]
-    for i in range(14790, 14891+1):  # (114791, 114791+1):  # 114791
+    for i in range(54890, 54891+1):  # (114791, 114791+1):  # 114791
         k_result = []
         alert, header = get_data(i, db_name)
+        print(alert, header)
         for k in dict_rules.keys():
             print(i, '#####', k)
             rule_result = execute_rule(alert, header, dict_rules[k])  # 930100
@@ -384,14 +427,3 @@ if __name__ == '__main__':
     z.write('result is : %s' % result)
     z.close()
 
-
-
-
-"""
-alert, header = get_data(114791, 'alertsbig.db')
-a = 'request'
-print(alert, '\n', header)
-if 'gjzgs1' in header[COOKIE]:
-    print(header[COOKIE]['gjzgs1'])
-#get_all_variable_types(ZY_RULE_FILE)
-"""

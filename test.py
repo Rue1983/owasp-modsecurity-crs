@@ -191,8 +191,8 @@ def execute_rule(alert, header, rule, chain=False, matched=[]):
     if operators.startswith('!@'):
         is_op_neg = 1
         operators = operators.strip('!')
-    print('test111 variables', variables)
-    print('test222 operators', operators)
+    #print('test111 variables', variables)
+    #print('test222 operators', operators)
     if not variables:
         return ret
     for v in variables:
@@ -314,7 +314,7 @@ def parse_variables(alerts, headers, variables):
         else:
             new_vars.append(v)
     real_var = []
-    print('before switch vas are', new_vars)
+    #print('before switch vas are', new_vars)
     if len(new_vars) != 0:
         for v in new_vars:
             if v.lstrip('!&').startswith('REQUEST_HEADERS:'):
@@ -397,7 +397,7 @@ def parse_variables(alerts, headers, variables):
                 real_var.append(alerts.method)
             elif v == 'REQUEST_URI_RAW':
                 real_var.append(alerts.request_uri_raw)
-    print('return parsed vars are : ', real_var)
+    #print('return parsed vars are : ', real_var)
     return real_var
 
 def get_data_from_db(id, db_name):
@@ -410,7 +410,7 @@ def get_data_from_db(id, db_name):
     """
     if os.path.isfile(db_name) is False:
         return -1
-    pool_size = 10000
+    pool_size = 1000
     header_result = defaultdict(lambda: '')
     alerts_result = []
     global data_pool
@@ -487,12 +487,13 @@ if __name__ == '__main__':
     cursor = c.execute('select count(*) from alerts ')
     for row in cursor:
         rec_num = row[0]
-    for i in range(start_id, start_id+10):  # (114791, 114791+1):  # 114791 #54890 ,rec_num+1
+    preparend = datetime.datetime.now()
+    for i in range(start_id, start_id+1000):  # (114791, 114791+1):  # 114791 #54890 ,rec_num+1
         i_result = []
         alert, header = get_data(i, db_name)
-        print(alert, header)
+        #print(alert, header)
         for k in dict_rules.keys():
-            print('\n', i, '#####', k)
+            #print('\n', i, '#####', k)
             rule_result = execute_rule(alert, header, dict_rules[k])  # 930100
             if not rule_result:
                 continue
@@ -500,15 +501,15 @@ if __name__ == '__main__':
                 result_chain1 = []
                 var_name = dict_rules[k]['chain']['variables']
                 if var_name == 'TX:0' or var_name == 'MATCHED_VARS':
-                    result_chain1 = execute_rule(alert, header, dict_rules[k], True, rule_result)
+                    result_chain1 = execute_rule(alert, header, dict_rules[k]['chain'], True, rule_result)
                 else:
-                    result_chain1 = execute_rule(alert, header, dict_rules[k])
+                    result_chain1 = execute_rule(alert, header, dict_rules[k]['chain'])
                 if result_chain1:
                     if 'chain' in dict_rules[k]['chain']:
                         if var_name == 'TX:0' or var_name == 'MATCHED_VARS':
-                            result_chain2 = execute_rule(alert, header, dict_rules[k]['chain'], True, rule_result)
+                            result_chain2 = execute_rule(alert, header, dict_rules[k]['chain']['chain'], True, rule_result)
                         else:
-                            result_chain2 = execute_rule(alert, header, dict_rules[k]['chain'])
+                            result_chain2 = execute_rule(alert, header, dict_rules[k]['chain']['chain'])
                         if result_chain2:
                             i_result.append(k)
                             #print('+++++ %s chain2 passed' % k)
@@ -527,9 +528,8 @@ if __name__ == '__main__':
             z.close()
         else:
             result.append('')
-    print('result is : %s' % result)
     z = open(result_file_name, "a", encoding='UTF-8')
     z.write('result is : %s' % result)
     z.close()
     endtime = datetime.datetime.now()
-    print('-----------', endtime - starttime)
+    print('-----total time cost------', endtime - starttime)

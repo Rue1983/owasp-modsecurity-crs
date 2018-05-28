@@ -55,8 +55,11 @@ def parse_rule_file(input_file_name, output_file_name):
                     output = "%s\t%s\n" % (output.rstrip('\n'), chain1)
                 if chain2:
                     output = "%s\t%s\n" % (output.rstrip('\n'), chain2)
+                chain1 = ''
+                chain2 = ''
                 z.write(output)
                 rule_found = 0
+                chain_found = 0
                 rule_var = ''
                 rule_op = ''
                 rule_msg = 'NO_MSG'

@@ -2,6 +2,8 @@ from collections import namedtuple
 from collections import defaultdict
 from collections import OrderedDict
 from collections import Counter
+import logging
+import traceback
 import os
 import sqlite3
 import re
@@ -22,10 +24,10 @@ db_name = 'alertsbig.db'
 
 
 def get_all_variable_types(file_name):
-    ret = []
-    op = []
     if not isinstance(file_name, str):
         raise TypeError('bad operand type')
+    ret = []
+    op = []
     with open(file_name, 'r', encoding='ansi') as f:
         for line in f.readlines():
             list_line = line.split('\t')
@@ -126,9 +128,10 @@ def get_vars_from_request(request):
     uri = ''
     request_protocol = ''
     match_vars = re.match(r'(\w+) (.*) (HTTP/\d?.?\d?)$', request)
-    method = match_vars.group(1)
-    uri = match_vars.group(2)
-    request_protocol = match_vars.group(3)
+    if match_vars:
+        method = match_vars.group(1)
+        uri = match_vars.group(2)
+        request_protocol = match_vars.group(3)
 
     sector = uri.split('?')
     request_filename = sector[0]
@@ -160,6 +163,7 @@ def get_vars_from_request(request):
     ret.append(request_basename)
     ret.append(query_string)
     ret.append(request_protocol)
+    ret.append(uri)
     return ret    #args_get, args_get_names, request_filename, request_basename, query_string, method, uri, request_protocol
 # request = 'GET /bemarket/shop/index.php?pageurl=viewpage&filename=../../../../../../../../../../../../../../etc/passwd HTTP/1.1'
 # request2 = 'GET /htgrep/file=index.html&hdr=/etc/passwd HTTP/2'
@@ -290,8 +294,17 @@ def execute_rule(alert, header, rule, chain=False, matched=[]):
             pass
         elif operators.startswith('@detectSQLi'):
             pass
+        elif operators.startswith('@validateUrlEncoding'):
+            pass
+        elif operators.startswith('@ge'):
+            pass
+        elif operators.startswith('@beginsWith'):
+            pass
+        elif operators.startswith('@gt'):
+            pass
         else:
-            raise ValueError('Unsupported modSecurity operator found!')
+            pass
+            #raise ValueError('Unsupported modSecurity operator found!')
     return ret
 
 
@@ -314,13 +327,15 @@ def parse_variables(alerts, headers, variables):
         else:
             new_vars.append(v)
     real_var = []
-    #print('before switch vas are', new_vars)
+    print('before switch vas are', new_vars)
     if len(new_vars) != 0:
         for v in new_vars:
             if v.lstrip('!&').startswith('REQUEST_HEADERS:'):
                 variable_name = v.split(':')[1]
                 if len(headers) == 0:
-                    real_var.append('')  # if there is no headers, return empty to match regex.
+                    continue
+                if not headers[variable_name]:
+                    continue
                 elif v.startswith('!') and headers[variable_name]:
                     headers.pop(variable_name)
                 elif v.startswith('&'):
@@ -331,9 +346,9 @@ def parse_variables(alerts, headers, variables):
             elif v.lstrip('!&').startswith('REQUEST_COOKIES:'):
                 cookie_name = v.split(':')[1]
                 if len(headers) == 0:
-                    real_var.append('')  # if there is no cookie, return empty to match regex.
+                    continue
                 elif not headers[COOKIE]:
-                    real_var.append('')  # if there is no cookie, return empty to match regex.
+                    continue
                 elif v.startswith('!'):
                     ##print(headers[COOKIE])
                     if headers[COOKIE][cookie_name]:
@@ -346,8 +361,7 @@ def parse_variables(alerts, headers, variables):
             elif v.lstrip('!&') == 'REQUEST_HEADERS':
                 whole_header = []
                 if not header:
-                    real_var.append('')
-                    continue
+                    continue  # real_var.append('')
                 for (key, value) in headers.items():
                     if key == COOKIE and headers[key]:
                         whole_cookie = []
@@ -358,28 +372,24 @@ def parse_variables(alerts, headers, variables):
                         whole_header.append('%s:%s' % (key, value))
                 real_var.append(whole_header)
             elif v == 'REQUEST_HEADERS_NAMES':
-                if len(headers) == 0:
-                    real_var.append('')  # if there is no header, return empty to match regex.
-                    continue
-                real_var.append(list(headers.keys()))
-                continue
+                if len(headers):
+                    real_var.append(list(headers.keys()))  # real_var.append('')
             elif v == 'REQUEST_COOKIES_NAMES':
                 if not header or len(headers[COOKIE]) == 0:
-                    real_var.append('')  # if there is no cookie, return empty to match regex.
-                    continue
+                    continue  # real_var.append('')
                 else:
                     real_var.append(list(headers[COOKIE].keys()))
             elif v == 'ARGS_GET' or v == 'ARGS':
                 #print('captured args: %s' % alerts.args_get)
-                real_var.append(alerts.args_get)
+                if alerts.args_get:
+                    real_var.append(alerts.args_get)
             elif v == 'ARGS_GET_NAMES' or v == 'ARGS_NAMES':
                 #print('captured args_names: %s' % alerts.args_get_names)
-                if len(alerts.args_get_names) == 0:
-                    real_var.append('')  # if there is no args, return empty to match regex.
-                    continue
-                real_var.append(alerts.args_get_names)
+                if len(alerts.args_get_names):
+                    real_var.append(alerts.args_get_names)
             elif v == 'REQUEST_URI':
-                real_var.append(alerts.uri)
+                if alert.uri:
+                    real_var.append(alerts.uri)
             elif v == 'REQUEST_LINE':
                 real_var.append(alerts.request)
             elif v == 'RESPONSE_STATUS':
@@ -388,16 +398,20 @@ def parse_variables(alerts, headers, variables):
             elif v == 'REQUEST_PROTOCOL':
                 real_var.append(alerts.request_protocol)
             elif v == 'QUERY_STRING':
-                real_var.append(alerts.query_string)
+                if alerts.query_string:
+                    real_var.append(alerts.query_string)
             elif v == 'REQUEST_BASENAME':
-                real_var.append(alerts.request_basename)
+                if alerts.request_basename:
+                    real_var.append(alerts.request_basename)
             elif v == 'REQUEST_FILENAME':
-                real_var.append(alerts.request_filename)
+                if alerts.request_filename:
+                    real_var.append(alerts.request_filename)
             elif v == 'REQUEST_METHOD':
                 real_var.append(alerts.method)
             elif v == 'REQUEST_URI_RAW':
-                real_var.append(alerts.request_uri_raw)
-    #print('return parsed vars are : ', real_var)
+                if alerts.request_uri_raw:
+                    real_var.append(alerts.request_uri_raw)
+    print('return parsed vars are : ', real_var)
     return real_var
 
 def get_data_from_db(id, db_name):
@@ -410,26 +424,26 @@ def get_data_from_db(id, db_name):
     """
     if os.path.isfile(db_name) is False:
         return -1
-    pool_size = 1000
+    pool_size = 100
     header_result = defaultdict(lambda: '')
     alerts_result = []
     global data_pool
     data_pool = {i: {'alert': '', 'header': ''} for i in range(id, id+pool_size)}
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
-    cursor = c.execute('select id,ip,remoteName,request,uri,status,host,time,state,msg '
+    cursor = c.execute('select id,ip,remoteName,request,status,host,msg '
                        'from alerts where id>=%d and id<%d' % (id, id+pool_size))
     for row in cursor:
         alerts_result = list(row)
         request_uri_raw = ''
-        matchmsg = re.match(r'\'(https?://.*)\' not allowed', alerts_result[9])
+        matchmsg = re.match(r'\'(https?://.*)\' not allowed', alerts_result[6])
         if matchmsg:
             request_uri_raw = matchmsg.group(0)
-        alerts_result[9] = request_uri_raw
+        alerts_result[6] = request_uri_raw
         request_vars = get_vars_from_request(alerts_result[3])
-        Alert = namedtuple('Alert', ['id', 'ip', 'remotename', 'request', 'uri', 'status', 'host', 'time', 'state',
+        Alert = namedtuple('Alert', ['id', 'ip', 'remotename', 'request', 'status', 'host',
                                      'request_uri_raw', 'method', 'args_get', 'args_get_names', 'request_filename',
-                                     'request_basename', 'query_string', 'request_protocol'])
+                                     'request_basename', 'query_string', 'request_protocol', 'uri'])
         alerts_result.extend(request_vars)
         alert = Alert._make(alerts_result)
         data_pool[alert.id]['alert'] = alert
@@ -475,61 +489,65 @@ def get_data(id, db_name):
 
 
 if __name__ == '__main__':
-    starttime = datetime.datetime.now()
-    #get_all_operator_types(ZY_RULE_FILE)
-    start_id = 109975
-    result_file_name = "result_modsecurity1.txt"
-    dict_rules, DATA_FILES = get_all_rules(ZY_RULE_FILE)
-    result = []
-    get_data_from_db(start_id, db_name)
-    conn = sqlite3.connect(db_name)
-    c = conn.cursor()
-    cursor = c.execute('select count(*) from alerts ')
-    for row in cursor:
-        rec_num = row[0]
-    preparend = datetime.datetime.now()
-    for i in range(start_id, start_id+1000):  # (114791, 114791+1):  # 114791 #54890 ,rec_num+1
-        i_result = []
-        alert, header = get_data(i, db_name)
-        #print(alert, header)
-        for k in dict_rules.keys():
-            #print('\n', i, '#####', k)
-            rule_result = execute_rule(alert, header, dict_rules[k])  # 930100
-            if not rule_result:
-                continue
-            elif 'chain' in dict_rules[k]:
-                result_chain1 = []
-                var_name = dict_rules[k]['chain']['variables']
-                if var_name == 'TX:0' or var_name == 'MATCHED_VARS':
-                    result_chain1 = execute_rule(alert, header, dict_rules[k]['chain'], True, rule_result)
-                else:
-                    result_chain1 = execute_rule(alert, header, dict_rules[k]['chain'])
-                if result_chain1:
-                    if 'chain' in dict_rules[k]['chain']:
-                        if var_name == 'TX:0' or var_name == 'MATCHED_VARS':
-                            result_chain2 = execute_rule(alert, header, dict_rules[k]['chain']['chain'], True, rule_result)
-                        else:
-                            result_chain2 = execute_rule(alert, header, dict_rules[k]['chain']['chain'])
-                        if result_chain2:
-                            i_result.append(k)
-                            #print('+++++ %s chain2 passed' % k)
-                            continue
+    #try:
+        starttime = datetime.datetime.now()
+        #get_all_operator_types(ZY_RULE_FILE)
+        start_id = 114791#109975
+        result_file_name = "result_modsecurity1.txt"
+        result = []
+        dict_rules, DATA_FILES = get_all_rules(ZY_RULE_FILE)
+        get_data_from_db(start_id, db_name)
+        conn = sqlite3.connect(db_name)
+        c = conn.cursor()
+        cursor = c.execute('select count(*) from alerts ')
+        for row in cursor:
+            rec_num = row[0]
+        for i in range(start_id, start_id+100):  # (114791, 114791+1):  # 114791 #54890 ,rec_num+1
+            i_result = []
+            alert, header = get_data(i, db_name)
+            print(alert, header)
+            for k in dict_rules.keys():
+                print('\n', i, '#####', k)
+                rule_result = execute_rule(alert, header, dict_rules[k])  # 930100
+                if not rule_result:
+                    continue
+                elif 'chain' in dict_rules[k]:
+                    result_chain1 = []
+                    var_name = dict_rules[k]['chain']['variables']
+                    if var_name == 'TX:0' or var_name == 'MATCHED_VARS':
+                        result_chain1 = execute_rule(alert, header, dict_rules[k]['chain'], True, rule_result)
                     else:
-                        i_result.append(k)
-                        #print('+++++ %s chain1 passed' % k)
-                        continue
+                        result_chain1 = execute_rule(alert, header, dict_rules[k]['chain'])
+                    if result_chain1:
+                        if 'chain' in dict_rules[k]['chain']:
+                            if var_name == 'TX:0' or var_name == 'MATCHED_VARS':
+                                result_chain2 = execute_rule(alert, header, dict_rules[k]['chain']['chain'], True, rule_result)
+                            else:
+                                result_chain2 = execute_rule(alert, header, dict_rules[k]['chain']['chain'])
+                            if result_chain2:
+                                i_result.append(k)
+                                #print('+++++ %s chain2 passed' % k)
+                                continue
+                        else:
+                            i_result.append(k)
+                            #print('+++++ %s chain1 passed' % k)
+                            continue
+                else:
+                    i_result.append(k)  # 930100
+                    #print('+++++  %s passed' % k)
+            if len(i_result) > 0:
+                result.append(i_result)
             else:
-                i_result.append(k)  # 930100
-                #print('+++++  %s passed' % k)
-        if len(i_result) > 0:
-            result.append(i_result)
-            z = open(result_file_name, "a", encoding='UTF-8')
-            z.write("%s\t%s\t%s\t%s\n" % (i, i_result, alert, header))
-            z.close()
-        else:
-            result.append('')
-    z = open(result_file_name, "a", encoding='UTF-8')
-    z.write('result is : %s' % result)
-    z.close()
-    endtime = datetime.datetime.now()
-    print('-----total time cost------', endtime - starttime)
+                result.append('')
+            #z = open(result_file_name, "a", encoding='UTF-8')
+            #z.write("%s\t%s\t%s\t%s\n" % (i, i_result, alert, header))
+            #z.close()
+        z = open(result_file_name, "a", encoding='UTF-8')
+        z.write('result is : %s' % result)
+        z.close()
+        endtime = datetime.datetime.now()
+        print('result is : %s' % result)
+        print('-----total time cost------', endtime - starttime)
+    #except Exception as e:
+    #    logging.exception(e)
+    #    traceback.print_exc()

@@ -424,7 +424,7 @@ def get_data_from_db(id, db_name):
     """
     if os.path.isfile(db_name) is False:
         return -1
-    pool_size = 100
+    pool_size = 10000
     header_result = defaultdict(lambda: '')
     alerts_result = []
     global data_pool
@@ -492,7 +492,7 @@ if __name__ == '__main__':
     #try:
         starttime = datetime.datetime.now()
         #get_all_operator_types(ZY_RULE_FILE)
-        start_id = 114791#109975
+        start_id = 1#109975
         result_file_name = "result_modsecurity1.txt"
         result = []
         dict_rules, DATA_FILES = get_all_rules(ZY_RULE_FILE)
@@ -502,10 +502,10 @@ if __name__ == '__main__':
         cursor = c.execute('select count(*) from alerts ')
         for row in cursor:
             rec_num = row[0]
-        for i in range(start_id, start_id+100):  # (114791, 114791+1):  # 114791 #54890 ,rec_num+1
+        for i in range(start_id, rec_num+1):  # (114791, 114791+1):  # 114791 #54890 ,rec_num+1
             i_result = []
             alert, header = get_data(i, db_name)
-            print(alert, header)
+            #print(alert, header)
             for k in dict_rules.keys():
                 print('\n', i, '#####', k)
                 rule_result = execute_rule(alert, header, dict_rules[k])  # 930100
